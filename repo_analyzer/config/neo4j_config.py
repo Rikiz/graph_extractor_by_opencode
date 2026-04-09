@@ -1,6 +1,8 @@
 import os
+import json
 from dataclasses import dataclass
 from typing import Optional
+from pathlib import Path
 
 
 @dataclass
@@ -21,8 +23,6 @@ class Neo4jConfig:
 
     @classmethod
     def from_file(cls, config_path: str) -> "Neo4jConfig":
-        import json
-
         with open(config_path, "r") as f:
             config = json.load(f)
 
@@ -32,3 +32,29 @@ class Neo4jConfig:
             password=config.get("password", "password"),
             database=config.get("database", "neo4j"),
         )
+
+    @classmethod
+    def auto_detect(cls) -> "Neo4jConfig":
+        """
+        自动检测配置（优先级）:
+        1. 环境变量
+        2. 当前目录的 neo4j_config.json
+        3. 默认值
+        """
+        # 优先使用环境变量
+        if os.getenv("NEO4J_URI") and os.getenv("NEO4J_PASSWORD"):
+            return cls.from_env()
+
+        # 查找配置文件
+        config_paths = [
+            Path.cwd() / "neo4j_config.json",
+            Path.cwd() / "config" / "neo4j_config.json",
+            Path(__file__).parent.parent.parent / "neo4j_config.json",
+        ]
+
+        for config_path in config_paths:
+            if config_path.exists():
+                return cls.from_file(str(config_path))
+
+        # 回退到环境变量（使用默认值）
+        return cls.from_env()
