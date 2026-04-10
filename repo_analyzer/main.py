@@ -9,7 +9,8 @@ from repo_analyzer.core.repo_manager import RepoGroup
 from repo_analyzer.core.cross_analyzer import CrossAnalyzer
 
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
@@ -30,9 +31,7 @@ def create_parser():
         choices=["backend", "gateway", "frontend"],
         help="Repo type",
     )
-    build_parser.add_argument(
-        "--rebuild", action="store_true", help="Rebuild if exists"
-    )
+    build_parser.add_argument("--rebuild", action="store_true", help="Rebuild if exists")
 
     group_parser = subparsers.add_parser("group", help="Manage repo groups")
     group_parser.add_argument(

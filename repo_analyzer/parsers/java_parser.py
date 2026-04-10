@@ -1,3 +1,9 @@
+"""
+Java Controller 解析器
+
+提取 Spring Boot REST Controller 中的 API 端点。
+"""
+
 import re
 import logging
 from typing import List, Optional
@@ -8,134 +14,276 @@ logger = logging.getLogger(__name__)
 
 
 class JavaParser(BaseParser):
+    """解析 Java Spring Boot Controller"""
+
     HTTP_METHOD_ANNOTATIONS = {
         "GetMapping": "GET",
         "PostMapping": "POST",
         "PutMapping": "PUT",
         "DeleteMapping": "DELETE",
         "PatchMapping": "PATCH",
-        "RequestMapping": None,
+        "RequestMapping": None,  # 需要从参数中提取 method
     }
 
     REST_ANNOTATIONS = ["RestController", "Controller", "RestControllerAdvice"]
 
     def parse(self, file_path: str, repo: str) -> List[BackendApi]:
+        """解析 Java 文件，提取 API 端点"""
         try:
             content = self.get_file_content(file_path)
-            return self._extract_apis(content, file_path, repo)
+            if not content.strip():
+                logger.debug(f"Empty file: {file_path}")
+                return []
+
+            apis = self._extract_apis(content, file_path, repo)
+
+            if apis:
+                logger.info(f"Extracted {len(apis)} APIs from {file_path}")
+
+            return apis
         except Exception as e:
-            logger.error(f"Error parsing {file_path}: {e}")
+            logger.error(f"Error parsing {file_path}: {e}", exc_info=True)
             return []
 
-    def _extract_apis(
-        self, content: str, file_path: str, repo: str
-    ) -> List[BackendApi]:
+    def _extract_apis(self, content: str, file_path: str, repo: str) -> List[BackendApi]:
+        """提取所有 API"""
         apis = []
 
+        # 找到所有 RestController 类
         classes = self._find_rest_controller_classes(content)
+
+        logger.debug(f"Found {len(classes)} controller classes in {file_path}")
 
         for class_info in classes:
             class_name = class_info["name"]
             class_base_path = class_info["base_path"]
+            class_content = class_info["content"]
 
-            methods = self._find_controller_methods(class_info["content"])
+            logger.debug(f"Processing class: {class_name}, base_path: {class_base_path or '/'}")
+
+            # 找到类中所有的方法
+            methods = self._find_controller_methods(class_content)
+
+            logger.debug(f"Found {len(methods)} methods in class {class_name}")
 
             for method_info in methods:
-                api = self._create_api(
-                    method_info, class_base_path, class_name, file_path, repo
-                )
+                api = self._create_api(method_info, class_base_path, class_name, file_path, repo)
                 if api:
                     apis.append(api)
 
         return apis
 
     def _find_rest_controller_classes(self, content: str) -> List[dict]:
+        """找到所有带有 @RestController 或 @Controller 注解的类"""
         classes = []
 
-        pattern = (
-            r"@(?:"
-            + "|".join(self.REST_ANNOTATIONS)
-            + r")\s*(?:\([^)]*\))?\s*public\s+class\s+(\w+)[^{]*\{"
-        )
+        # 方法1: 使用正则找到注解和类
+        # 放宽要求：注解和类声明可以在不同行
+        for annotation in self.REST_ANNOTATIONS:
+            # 匹配 @Controller 注解后的类定义
+            # 支持：
+            # @Controller
+            # public class MyController {
+            #
+            # @Controller("name")
+            # class MyController {
+            #
+            # @Controller @RequestMapping("/api")
+            # public class MyController {
 
-        for match in re.finditer(pattern, content, re.MULTILINE):
-            class_name = match.group(1)
-            class_start = match.end() - 1
+            pattern = rf"@{annotation}\s*(?:\([^)]*\))?\s*(?:(?!@{annotation})[\s\S])*?(?:public\s+)?class\s+(\w+)\s*(?:extends\s+\w+)?\s*(?:implements\s+[\w,\s]+)?\s*\{{"
 
-            class_end = self._find_class_end(content, class_start)
-            class_content = content[class_start:class_end]
+            for match in re.finditer(pattern, content):
+                class_name = match.group(1)
+                class_start = match.end() - 1  # 指向 {
 
-            base_path = self._extract_class_base_path(match.group(0))
+                # 找到类的结束位置
+                class_end = self._find_class_end(content, class_start)
+                class_content = content[class_start:class_end]
 
-            classes.append(
-                {"name": class_name, "base_path": base_path, "content": class_content}
-            )
+                # 提取类级别的 @RequestMapping 路径
+                # 从匹配的整个文本中查找
+                annotation_block = match.group(0)
+                base_path = self._extract_class_base_path(content[: match.end()])
 
-        return classes
+                classes.append(
+                    {"name": class_name, "base_path": base_path, "content": class_content}
+                )
+
+        # 去重（可能被多个注解匹配）
+        seen = set()
+        unique_classes = []
+        for cls in classes:
+            if cls["name"] not in seen:
+                seen.add(cls["name"])
+                unique_classes.append(cls)
+
+        return unique_classes
 
     def _find_class_end(self, content: str, start: int) -> int:
+        """找到类的结束括号位置"""
         brace_count = 0
         i = start
+        in_string = False
+        in_comment = False
+        string_char = None
 
         while i < len(content):
-            if content[i] == "{":
-                brace_count += 1
-            elif content[i] == "}":
-                brace_count -= 1
-                if brace_count == 0:
-                    return i
+            char = content[i]
+
+            # 处理注释
+            if not in_string:
+                if i + 1 < len(content):
+                    two_chars = content[i : i + 2]
+                    if two_chars == "/*" and not in_comment:
+                        in_comment = True
+                        i += 2
+                        continue
+                    elif two_chars == "*/" and in_comment:
+                        in_comment = False
+                        i += 2
+                        continue
+                    elif two_chars == "//" and not in_comment:
+                        # 跳过单行注释
+                        while i < len(content) and content[i] != "\n":
+                            i += 1
+                        continue
+
+            if in_comment:
+                i += 1
+                continue
+
+            # 处理字符串
+            if char in ('"', "'") and not in_string:
+                in_string = True
+                string_char = char
+            elif char == string_char and in_string:
+                # 检查是否是转义的引号
+                if i > 0 and content[i - 1] != "\\":
+                    in_string = False
+                    string_char = None
+
+            # 统计括号
+            if not in_string:
+                if char == "{":
+                    brace_count += 1
+                elif char == "}":
+                    brace_count -= 1
+                    if brace_count == 0:
+                        return i
+
             i += 1
 
         return len(content)
 
-    def _extract_class_base_path(self, annotation_block: str) -> str:
-        request_mapping_pattern = (
-            r'@RequestMapping\s*\(\s*(?:value\s*=\s*)?["\']([^"\']+)["\']'
-        )
+    def _extract_class_base_path(self, content_before_class: str) -> str:
+        """从类声明之前的内容中提取 @RequestMapping 的路径"""
+        # 支持多种格式：
+        # @RequestMapping("/api")
+        # @RequestMapping(value = "/api")
+        # @RequestMapping(path = "/api")
 
-        match = re.search(request_mapping_pattern, annotation_block)
-        if match:
-            return match.group(1)
+        patterns = [
+            r'@RequestMapping\s*\(\s*(?:value\s*=\s*)?["\']([^"\']+)["\']',
+            r'@RequestMapping\s*\(\s*path\s*=\s*["\']([^"\']+)["\']',
+            r'@RequestMapping\s*\(\s*["\']([^"\']+)["\']',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, content_before_class)
+            if match:
+                return match.group(1)
 
         return ""
 
     def _find_controller_methods(self, class_content: str) -> List[dict]:
+        """找到类中所有带有 HTTP 方法注解的方法"""
         methods = []
 
         for annotation, default_method in self.HTTP_METHOD_ANNOTATIONS.items():
-            pattern = rf"@{annotation}\s*\(([^)]*)\)\s*(?:public\s+)?(?:[\w<>?,\s]+\s+)?(\w+)\s*\("
+            # 匹配方法定义
+            # 支持多种格式：
+            # @GetMapping("/users")
+            # @GetMapping(value = "/users")
+            # @GetMapping(path = "/users")
+            # @RequestMapping(value = "/users", method = RequestMethod.GET)
 
-            for match in re.finditer(pattern, class_content, re.MULTILINE):
-                annotation_params = match.group(1)
-                method_name = match.group(2)
+            # 先找到所有注解位置
+            annotation_pattern = rf"@{annotation}\s*(\([^)]*\))?\s*"
 
-                path = self._extract_path_from_annotation(annotation_params)
-                http_method = default_method or self._extract_method_from_annotation(
-                    annotation_params
-                )
+            for ann_match in re.finditer(annotation_pattern, class_content):
+                annotation_params = ann_match.group(1) or ""
 
-                if http_method is None:
-                    http_method = "GET"
+                # 从注解位置向后找方法名
+                # 匹配: public ReturnType methodName(
+                # 或: ReturnType methodName(
+                method_pattern = r"(?:public\s+)?(?:[\w<>?,\s\[\]]+\s+)?(\w+)\s*\("
 
-                methods.append(
-                    {
-                        "path": path,
-                        "http_method": http_method,
-                        "method_name": method_name,
-                    }
-                )
+                # 从注解结束位置开始搜索
+                search_start = ann_match.end()
+                remaining = class_content[search_start:]
+
+                method_match = re.search(method_pattern, remaining)
+                if method_match:
+                    method_name = method_match.group(1)
+
+                    # 跳过常见的非方法名
+                    if method_name in (
+                        "class",
+                        "interface",
+                        "if",
+                        "while",
+                        "for",
+                        "switch",
+                        "catch",
+                    ):
+                        continue
+
+                    path = self._extract_path_from_annotation(annotation_params)
+                    http_method = default_method or self._extract_method_from_annotation(
+                        annotation_params
+                    )
+
+                    if http_method is None:
+                        http_method = "GET"
+
+                    methods.append(
+                        {
+                            "path": path,
+                            "http_method": http_method,
+                            "method_name": method_name,
+                        }
+                    )
+
+                    logger.debug(f"Found method: {http_method} {path or '/'} -> {method_name}")
 
         return methods
 
     def _extract_path_from_annotation(self, params: str) -> str:
+        """从注解参数中提取路径"""
+        if not params or not params.strip():
+            return ""
+
+        # 移除括号
+        params = params.strip()
+        if params.startswith("(") and params.endswith(")"):
+            params = params[1:-1]
+
         if not params.strip():
             return ""
 
-        value_pattern = r'(?:value|path)\s*=\s*["\']([^"\']+)["\']'
-        match = re.search(value_pattern, params)
-        if match:
-            return match.group(1)
+        # 尝试多种格式
+        patterns = [
+            r'(?:value|path)\s*=\s*["\']([^"\']+)["\']',  # value = "/path" 或 path = "/path"
+            r'^\s*["\']([^"\']+)["\']',  # 直接是字符串 "/path"
+        ]
 
+        for pattern in patterns:
+            match = re.search(pattern, params)
+            if match:
+                return match.group(1)
+
+        # 如果都没有，但参数中有引号包裹的内容，取第一个
         simple_pattern = r'["\']([^"\']+)["\']'
         match = re.search(simple_pattern, params)
         if match:
@@ -144,10 +292,31 @@ class JavaParser(BaseParser):
         return ""
 
     def _extract_method_from_annotation(self, params: str) -> Optional[str]:
-        method_pattern = r"method\s*=\s*(?:RequestMethod\.)?(\w+)"
-        match = re.search(method_pattern, params)
-        if match:
-            return match.group(1).upper()
+        """从 @RequestMapping 注解中提取 HTTP 方法"""
+        if not params:
+            return None
+
+        # 移除括号
+        params = params.strip()
+        if params.startswith("(") and params.endswith(")"):
+            params = params[1:-1]
+
+        # 支持多种格式：
+        # method = RequestMethod.GET
+        # method = GET
+        # method = {RequestMethod.GET, RequestMethod.POST}
+
+        patterns = [
+            r"method\s*=\s*RequestMethod\.(\w+)",
+            r"method\s*=\s*(\w+)(?!\.)",
+            r"method\s*=\s*\{?\s*RequestMethod\.(\w+)",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, params)
+            if match:
+                return match.group(1).upper()
+
         return None
 
     def _create_api(
@@ -158,8 +327,8 @@ class JavaParser(BaseParser):
         file_path: str,
         repo: str,
     ) -> Optional[BackendApi]:
+        """创建 API 实体"""
         full_path = self._normalize_path(class_base_path + method_info["path"])
-
         parameters = self._extract_path_parameters(full_path)
 
         return BackendApi(
@@ -173,10 +342,20 @@ class JavaParser(BaseParser):
         )
 
     def _normalize_path(self, path: str) -> str:
+        """标准化路径"""
+        # 移除重复斜杠
         path = re.sub(r"/+", "/", path)
+        # 确保以 / 开头
         if not path.startswith("/"):
             path = "/" + path
+        # 移除尾部斜杠（除非是根路径）
+        if path != "/" and path.endswith("/"):
+            path = path.rstrip("/")
         return path
 
     def _extract_path_parameters(self, path: str) -> List[str]:
-        return re.findall(r"\{(\w+)\}", path)
+        """提取路径参数"""
+        # 支持 {id} 和 ${id} 格式
+        params = re.findall(r"\{(\w+)\}", path)
+        params.extend(re.findall(r"\$\{(\w+)\}", path))
+        return list(set(params))  # 去重
