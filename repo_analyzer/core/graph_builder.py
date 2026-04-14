@@ -21,6 +21,25 @@ class GraphBuilder:
         "frontend": ["**/*.ts", "**/*.tsx", "**/*.json"],
     }
 
+    JSON_EXCLUDE_PATTERNS = [
+        "tsconfig",
+        "package",
+        "package-lock",
+        "yarn.lock",
+        ".eslintrc",
+        ".prettierrc",
+        "babel.config",
+        "jest.config",
+        "karma.conf",
+        "angular.json",
+        "project.json",
+        "nx.json",
+        "tslint.json",
+        "typings.json",
+        "vscode",
+        ".vscode",
+    ]
+
     def __init__(self, writer: Neo4jWriter):
         self.writer = writer
 
@@ -30,18 +49,14 @@ class GraphBuilder:
             "frontend": None,
         }
 
-    def build_repo_graph(
-        self, repo_name: str, repo_path: str, repo_type: str
-    ) -> Dict[str, int]:
+    def build_repo_graph(self, repo_name: str, repo_path: str, repo_type: str) -> Dict[str, int]:
         if repo_type not in self.FILE_PATTERNS:
             raise ValueError(f"Invalid repo_type: {repo_type}")
 
         if not os.path.exists(repo_path):
             raise ValueError(f"Repo path not found: {repo_path}")
 
-        logger.info(
-            f"Building graph for repo '{repo_name}' ({repo_type}) from {repo_path}"
-        )
+        logger.info(f"Building graph for repo '{repo_name}' ({repo_type}) from {repo_path}")
 
         files = self._scan_files(repo_path, repo_type)
         logger.info(f"Found {len(files)} files to process")
@@ -79,8 +94,9 @@ class GraphBuilder:
                     parsed = ts_parser.parse(file_path, repo_name)
                     entities.extend(parsed)
                 elif file_path.endswith(".json"):
-                    parsed = json_parser.parse(file_path, repo_name)
-                    entities.extend(parsed)
+                    if self._should_parse_json(file_path):
+                        parsed = json_parser.parse(file_path, repo_name)
+                        entities.extend(parsed)
         else:
             parser = self.parsers[repo_type]
 
@@ -90,9 +106,16 @@ class GraphBuilder:
 
         return entities
 
-    def rebuild_repo(
-        self, repo_name: str, repo_path: str, repo_type: str
-    ) -> Dict[str, int]:
+    def _should_parse_json(self, file_path: str) -> bool:
+        import os
+
+        filename = os.path.basename(file_path).lower()
+        for pattern in self.JSON_EXCLUDE_PATTERNS:
+            if pattern.lower() in filename:
+                return False
+        return True
+
+    def rebuild_repo(self, repo_name: str, repo_path: str, repo_type: str) -> Dict[str, int]:
         logger.info(f"Clearing existing data for repo '{repo_name}'")
         deleted = self.writer.clear_repo(repo_name)
         logger.info(f"Deleted {deleted} nodes")

@@ -27,10 +27,10 @@ class JsonParser(BaseParser):
 
             return mappings
         except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in {file_path}: {e}")
+            logger.debug(f"Invalid JSON in {file_path}: {e}")
             return []
         except Exception as e:
-            logger.error(f"Error parsing {file_path}: {e}")
+            logger.debug(f"Error parsing {file_path}: {e}")
             return []
 
     def _search_mappings(
@@ -75,9 +75,7 @@ class JsonParser(BaseParser):
 
         return False
 
-    def _create_mapping(
-        self, obj: Dict[str, Any], file_path: str, repo: str
-    ) -> MappingRule:
+    def _create_mapping(self, obj: Dict[str, Any], file_path: str, repo: str) -> MappingRule:
         uri = (
             obj.get("uri")
             or obj.get("url")
