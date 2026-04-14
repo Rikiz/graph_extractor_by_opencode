@@ -146,21 +146,11 @@ class JavaParser(BaseParser):
         return unique_classes
 
     def _find_api_interfaces(self, content: str) -> List[dict]:
-        """找到所有带有 @RequestMapping 或 @FeignClient 注解的接口"""
+        """找到所有带有 @RequestMapping 或 @FeignClient 注解的接口，或带有 HTTP 方法注解的接口"""
         interfaces = []
 
+        # 方式1: 查找带类级别注解的接口
         for annotation in self.INTERFACE_ANNOTATIONS:
-            # 匹配带注解的接口定义
-            # 支持：
-            # @RequestMapping("/api")
-            # public interface MyApi {
-            #
-            # @FeignClient(name = "service", path = "/api")
-            # public interface MyApi {
-            #
-            # @RequestMapping(value = "/v1/checkers-version", method = RequestMethod.GET)
-            # interface CheckersVersionApi {
-
             pattern = rf"@{annotation}\s*(?:\([^)]*\))?\s*(?:(?!@{annotation})[\s\S])*?(?:public\s+)?interface\s+(\w+)\s*(?:extends\s+[\w,\s]+)?\s*\{{"
 
             for match in re.finditer(pattern, content):
@@ -170,13 +160,36 @@ class JavaParser(BaseParser):
                 interface_end = self._find_class_end(content, interface_start)
                 interface_content = content[interface_start:interface_end]
 
-                # 提取接口级别的路径
-                # 对于 @RequestMapping，直接提取 value/path
-                # 对于 @FeignClient，提取 path 属性
                 base_path = self._extract_interface_base_path(content[: match.end()], annotation)
 
                 interfaces.append(
                     {"name": interface_name, "base_path": base_path, "content": interface_content}
+                )
+
+        # 方式2: 查找没有任何类级别注解，但方法上有 HTTP 方法注解的接口
+        # 例如: public interface CheckersVersionApi { @RequestMapping(...) Response method(); }
+        generic_interface_pattern = (
+            r"(?:public\s+)?interface\s+(\w+Api)\s*(?:extends\s+[\w,\s]+)?\s*\{"
+        )
+        for match in re.finditer(generic_interface_pattern, content):
+            interface_name = match.group(1)
+
+            # 检查是否已经被方式1找到
+            if any(iface["name"] == interface_name for iface in interfaces):
+                continue
+
+            interface_start = match.end() - 1
+            interface_end = self._find_class_end(content, interface_start)
+            interface_content = content[interface_start:interface_end]
+
+            # 检查接口内是否有 HTTP 方法注解
+            has_http_annotation = any(
+                f"@{ann}" in interface_content for ann in self.HTTP_METHOD_ANNOTATIONS.keys()
+            )
+
+            if has_http_annotation:
+                interfaces.append(
+                    {"name": interface_name, "base_path": "", "content": interface_content}
                 )
 
         # 去重
