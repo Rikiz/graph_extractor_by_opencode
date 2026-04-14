@@ -101,28 +101,53 @@ class RepoGroup:
         query = """
         // 路径1: 直接 CALLS 关系
         MATCH (url:FrontendUrl)-[c:CALLS]->(route:GatewayRoute)-[r:ROUTES_TO]->(api:BackendApi)
-        RETURN url.raw_url as frontend_url,
-               route.full_path as gateway_path,
-               api.class_name as backend_class,
-               api.method_name as backend_method,
-               c.match_type as frontend_match_type,
-               c.confidence as frontend_confidence,
-               r.match_type as gateway_match_type,
-               r.confidence as gateway_confidence
+        WITH url.raw_url as frontend_url,
+             route.full_path as gateway_path,
+             api.class_name as backend_class,
+             api.method_name as backend_method,
+             c.match_type as frontend_match_type,
+             c.confidence as frontend_confidence,
+             r.match_type as gateway_match_type,
+             r.confidence as gateway_confidence,
+             c.confidence * r.confidence as total_confidence
         
         UNION
         
         // 路径2: 通过 MappingRule 间接连接
         MATCH (url:FrontendUrl)-[um:USES_MAPPING]->(mapping:MappingRule)-[mt:MAPS_TO]->(route:GatewayRoute)-[r:ROUTES_TO]->(api:BackendApi)
-        RETURN url.raw_url as frontend_url,
-               route.full_path as gateway_path,
-               api.class_name as backend_class,
-               api.method_name as backend_method,
-               um.match_type as frontend_match_type,
-               um.confidence as frontend_confidence,
-               r.match_type as gateway_match_type,
-               r.confidence as gateway_confidence
+        WITH url.raw_url as frontend_url,
+             route.full_path as gateway_path,
+             api.class_name as backend_class,
+             api.method_name as backend_method,
+             um.match_type as frontend_match_type,
+             um.confidence as frontend_confidence,
+             r.match_type as gateway_match_type,
+             r.confidence as gateway_confidence,
+             um.confidence * r.confidence as total_confidence
         
+        // 按总置信度排序，每个 frontend_url 只取最高的一条
+        ORDER BY frontend_url, total_confidence DESC
+        WITH frontend_url, 
+             COLLECT({
+                 gateway_path: gateway_path,
+                 backend_class: backend_class,
+                 backend_method: backend_method,
+                 frontend_match_type: frontend_match_type,
+                 frontend_confidence: frontend_confidence,
+                 gateway_match_type: gateway_match_type,
+                 gateway_confidence: gateway_confidence,
+                 total_confidence: total_confidence
+             })[0] as best
+        
+        RETURN frontend_url,
+               best.gateway_path as gateway_path,
+               best.backend_class as backend_class,
+               best.backend_method as backend_method,
+               best.frontend_match_type as frontend_match_type,
+               best.frontend_confidence as frontend_confidence,
+               best.gateway_match_type as gateway_match_type,
+               best.gateway_confidence as gateway_confidence
+        ORDER BY best.total_confidence DESC
         LIMIT $limit
         """
 
