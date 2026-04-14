@@ -59,9 +59,7 @@ class RepoGroup:
 
         for repo in repos:
             if not self.writer.repo_exists(repo):
-                raise ValueError(
-                    f"Repo '{repo}' not found. Run build_repo_graph first."
-                )
+                raise ValueError(f"Repo '{repo}' not found. Run build_repo_graph first.")
 
         logger.info(f"Analyzing RepoGroup '{name}' with repos: {repos}")
 
@@ -101,6 +99,7 @@ class RepoGroup:
 
     def get_call_chain(self, group_name: str, limit: int = 100) -> List[Dict]:
         query = """
+        // 路径1: 直接 CALLS 关系
         MATCH (url:FrontendUrl)-[c:CALLS]->(route:GatewayRoute)-[r:ROUTES_TO]->(api:BackendApi)
         RETURN url.raw_url as frontend_url,
                route.full_path as gateway_path,
@@ -110,6 +109,20 @@ class RepoGroup:
                c.confidence as frontend_confidence,
                r.match_type as gateway_match_type,
                r.confidence as gateway_confidence
+        
+        UNION
+        
+        // 路径2: 通过 MappingRule 间接连接
+        MATCH (url:FrontendUrl)-[um:USES_MAPPING]->(mapping:MappingRule)-[mt:MAPS_TO]->(route:GatewayRoute)-[r:ROUTES_TO]->(api:BackendApi)
+        RETURN url.raw_url as frontend_url,
+               route.full_path as gateway_path,
+               api.class_name as backend_class,
+               api.method_name as backend_method,
+               um.match_type as frontend_match_type,
+               um.confidence as frontend_confidence,
+               r.match_type as gateway_match_type,
+               r.confidence as gateway_confidence
+        
         LIMIT $limit
         """
 
@@ -118,7 +131,7 @@ class RepoGroup:
     def get_unmatched_frontend_urls(self) -> List[Dict]:
         query = """
         MATCH (url:FrontendUrl)
-        WHERE NOT (url)-[:CALLS]->(:GatewayRoute)
+        WHERE NOT (url)-[:CALLS]->(:GatewayRoute) AND NOT (url)-[:USES_MAPPING]->(:MappingRule)
         RETURN url.raw_url as url, url.file_path as file_path, url.line_number as line
         """
 
@@ -149,9 +162,7 @@ class RepoGroup:
 
         return True
 
-    def _update_group_status(
-        self, name: str, status: str, results: Dict = None
-    ) -> None:
+    def _update_group_status(self, name: str, status: str, results: Dict = None) -> None:
         query = """
         MATCH (g:RepoGroup {name: $name})
         SET g.status = $status,
@@ -159,6 +170,4 @@ class RepoGroup:
             g.analysis_results = $results
         """
 
-        self.writer.execute(
-            query, {"name": name, "status": status, "results": results or {}}
-        )
+        self.writer.execute(query, {"name": name, "status": status, "results": results or {}})

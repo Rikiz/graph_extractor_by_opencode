@@ -94,12 +94,8 @@ def main():
             results = manager.analyze_group(group_name)
 
             print("\n[Results]")
-            print(
-                f"  Frontend -> Gateway: {results.get('frontend_to_gateway', 0)} relations"
-            )
-            print(
-                f"  Gateway -> Backend: {results.get('gateway_to_backend', 0)} relations"
-            )
+            print(f"  Frontend -> Gateway: {results.get('frontend_to_gateway', 0)} relations")
+            print(f"  Gateway -> Backend: {results.get('gateway_to_backend', 0)} relations")
             print(f"  Mapping relations: {results.get('mapping_relations', 0)}")
 
             # Get statistics
@@ -108,7 +104,7 @@ def main():
 
             # Query call chains
             print("\n[Query] Sample call chains:")
-            chains = manager.get_call_chain(limit=5)
+            chains = manager.get_call_chain(group_name=group_name, limit=5)
             for chain in chains:
                 print(f"  {chain['frontend_url']}")
                 print(f"    -> {chain['gateway_path']}")
