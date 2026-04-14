@@ -1,7 +1,10 @@
 """
 Java Controller 解析器
 
-提取 Spring Boot REST Controller 中的 API 端点。
+提取 Spring Boot REST Controller 及 API 接口定义中的端点。
+支持：
+- @RestController/@Controller 注解的类
+- @RequestMapping/@FeignClient 注解的接口
 """
 
 import re
@@ -14,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class JavaParser(BaseParser):
-    """解析 Java Spring Boot Controller"""
+    """解析 Java Spring Boot Controller 及 API 接口"""
 
     HTTP_METHOD_ANNOTATIONS = {
         "GetMapping": "GET",
@@ -22,10 +25,12 @@ class JavaParser(BaseParser):
         "PutMapping": "PUT",
         "DeleteMapping": "DELETE",
         "PatchMapping": "PATCH",
-        "RequestMapping": None,  # 需要从参数中提取 method
+        "RequestMapping": None,
     }
 
     REST_ANNOTATIONS = ["RestController", "Controller", "RestControllerAdvice"]
+
+    INTERFACE_ANNOTATIONS = ["RequestMapping", "FeignClient"]
 
     def parse(self, file_path: str, repo: str) -> List[BackendApi]:
         """解析 Java 文件，提取 API 端点"""
@@ -51,7 +56,6 @@ class JavaParser(BaseParser):
 
         # 找到所有 RestController 类
         classes = self._find_rest_controller_classes(content)
-
         logger.debug(f"Found {len(classes)} controller classes in {file_path}")
 
         for class_info in classes:
@@ -61,13 +65,34 @@ class JavaParser(BaseParser):
 
             logger.debug(f"Processing class: {class_name}, base_path: {class_base_path or '/'}")
 
-            # 找到类中所有的方法
             methods = self._find_controller_methods(class_content)
-
             logger.debug(f"Found {len(methods)} methods in class {class_name}")
 
             for method_info in methods:
                 api = self._create_api(method_info, class_base_path, class_name, file_path, repo)
+                if api:
+                    apis.append(api)
+
+        # 找到所有 API 接口定义
+        interfaces = self._find_api_interfaces(content)
+        logger.debug(f"Found {len(interfaces)} API interfaces in {file_path}")
+
+        for interface_info in interfaces:
+            interface_name = interface_info["name"]
+            interface_base_path = interface_info["base_path"]
+            interface_content = interface_info["content"]
+
+            logger.debug(
+                f"Processing interface: {interface_name}, base_path: {interface_base_path or '/'}"
+            )
+
+            methods = self._find_controller_methods(interface_content)
+            logger.debug(f"Found {len(methods)} methods in interface {interface_name}")
+
+            for method_info in methods:
+                api = self._create_api(
+                    method_info, interface_base_path, interface_name, file_path, repo
+                )
                 if api:
                     apis.append(api)
 
@@ -119,6 +144,72 @@ class JavaParser(BaseParser):
                 unique_classes.append(cls)
 
         return unique_classes
+
+    def _find_api_interfaces(self, content: str) -> List[dict]:
+        """找到所有带有 @RequestMapping 或 @FeignClient 注解的接口"""
+        interfaces = []
+
+        for annotation in self.INTERFACE_ANNOTATIONS:
+            # 匹配带注解的接口定义
+            # 支持：
+            # @RequestMapping("/api")
+            # public interface MyApi {
+            #
+            # @FeignClient(name = "service", path = "/api")
+            # public interface MyApi {
+            #
+            # @RequestMapping(value = "/v1/checkers-version", method = RequestMethod.GET)
+            # interface CheckersVersionApi {
+
+            pattern = rf"@{annotation}\s*(?:\([^)]*\))?\s*(?:(?!@{annotation})[\s\S])*?(?:public\s+)?interface\s+(\w+)\s*(?:extends\s+[\w,\s]+)?\s*\{{"
+
+            for match in re.finditer(pattern, content):
+                interface_name = match.group(1)
+                interface_start = match.end() - 1
+
+                interface_end = self._find_class_end(content, interface_start)
+                interface_content = content[interface_start:interface_end]
+
+                # 提取接口级别的路径
+                # 对于 @RequestMapping，直接提取 value/path
+                # 对于 @FeignClient，提取 path 属性
+                base_path = self._extract_interface_base_path(content[: match.end()], annotation)
+
+                interfaces.append(
+                    {"name": interface_name, "base_path": base_path, "content": interface_content}
+                )
+
+        # 去重
+        seen = set()
+        unique_interfaces = []
+        for iface in interfaces:
+            if iface["name"] not in seen:
+                seen.add(iface["name"])
+                unique_interfaces.append(iface)
+
+        return unique_interfaces
+
+    def _extract_interface_base_path(self, content_before_interface: str, annotation: str) -> str:
+        """从接口声明之前的内容中提取基础路径"""
+        if annotation == "FeignClient":
+            # @FeignClient(path = "/api") 或 @FeignClient(name = "service", path = "/api")
+            patterns = [
+                r'path\s*=\s*["\']([^"\']+)["\']',
+            ]
+        else:
+            # @RequestMapping("/api") 或 @RequestMapping(value = "/api")
+            patterns = [
+                r'@RequestMapping\s*\(\s*(?:value\s*=\s*)?["\']([^"\']+)["\']',
+                r'@RequestMapping\s*\(\s*path\s*=\s*["\']([^"\']+)["\']',
+                r'@RequestMapping\s*\(\s*["\']([^"\']+)["\']',
+            ]
+
+        for pattern in patterns:
+            match = re.search(pattern, content_before_interface)
+            if match:
+                return match.group(1)
+
+        return ""
 
     def _find_class_end(self, content: str, start: int) -> int:
         """找到类的结束括号位置"""

@@ -79,3 +79,72 @@ public class ServiceClass {
         assert self.parser._normalize_path("//api//users") == "/api/users"
         assert self.parser._normalize_path("api/users") == "/api/users"
         assert self.parser._normalize_path("/api/users/") == "/api/users/"
+
+    def test_extract_interface_with_request_mapping(self):
+        java_code = """
+@RequestMapping("/v1/checkers-version")
+public interface CheckersVersionApi {
+    
+    @GetMapping
+    CheckersVersionResponse getCheckersVersion();
+    
+    @PostMapping("/update")
+    void updateCheckersVersion(@RequestBody UpdateRequest request);
+}
+"""
+        apis = self.parser._extract_apis(java_code, "test.java", "backend")
+
+        assert len(apis) == 2
+        assert apis[0].method == "GET"
+        assert apis[0].full_path == "/v1/checkers-version"
+        assert apis[0].class_name == "CheckersVersionApi"
+        assert apis[0].method_name == "getCheckersVersion"
+
+        assert apis[1].method == "POST"
+        assert apis[1].full_path == "/v1/checkers-version/update"
+        assert apis[1].method_name == "updateCheckersVersion"
+
+    def test_extract_interface_without_public(self):
+        java_code = """
+@RequestMapping(value = "/v1/tenant-configs")
+interface TenantConfigApi {
+    
+    @GetMapping
+    List<TenantConfig> listConfigs();
+    
+    @PutMapping("/{id}")
+    void updateConfig(@PathVariable String id, @RequestBody Config config);
+}
+"""
+        apis = self.parser._extract_apis(java_code, "test.java", "backend")
+
+        assert len(apis) == 2
+        assert apis[0].method == "GET"
+        assert apis[0].full_path == "/v1/tenant-configs"
+        assert apis[0].class_name == "TenantConfigApi"
+
+        assert apis[1].method == "PUT"
+        assert apis[1].full_path == "/v1/tenant-configs/{id}"
+        assert apis[1].method_name == "updateConfig"
+
+    def test_extract_feign_client_interface(self):
+        java_code = """
+@FeignClient(name = "user-service", path = "/api/users")
+public interface UserClient {
+    
+    @GetMapping("/{id}")
+    User getUser(@PathVariable Long id);
+    
+    @PostMapping
+    User createUser(@RequestBody User user);
+}
+"""
+        apis = self.parser._extract_apis(java_code, "test.java", "backend")
+
+        assert len(apis) == 2
+        assert apis[0].method == "GET"
+        assert apis[0].full_path == "/api/users/{id}"
+        assert apis[0].class_name == "UserClient"
+
+        assert apis[1].method == "POST"
+        assert apis[1].full_path == "/api/users"
