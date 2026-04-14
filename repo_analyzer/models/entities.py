@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
+import json
 
 
 @dataclass
@@ -53,7 +54,7 @@ class GatewayRoute:
             "file_path": self.file_path,
             "tags": self.tags,
             "summary": self.summary,
-            "parameters": self.parameters,
+            "parameters": json.dumps(self.parameters) if self.parameters else "[]",
             "deprecated": self.deprecated,
         }
 

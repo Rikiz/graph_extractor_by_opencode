@@ -16,9 +16,7 @@ class CrossAnalyzer:
 
     def analyze(self, repos: List[str]) -> Dict[str, int]:
         if not self._validate_repos(repos):
-            raise ValueError(
-                "Not all repos have been built. Run build_repo_graph first."
-            )
+            raise ValueError("Not all repos have been built. Run build_repo_graph first.")
 
         logger.info(f"Starting cross-repo analysis for repos: {repos}")
 
@@ -67,9 +65,7 @@ class CrossAnalyzer:
         relation_count = 0
 
         for url in frontend_urls:
-            matches = self.matcher.match_frontend_to_gateway(
-                url, gateway_routes, mappings
-            )
+            matches = self.matcher.match_frontend_to_gateway(url, gateway_routes, mappings)
 
             for match in matches:
                 self.writer.write_calls_relation(
@@ -125,9 +121,7 @@ class CrossAnalyzer:
 
         logger.info(f"Building mapping relations for {len(mappings)} mappings")
 
-        relations = self.matcher.build_mapping_relations(
-            frontend_urls, mappings, gateway_routes
-        )
+        relations = self.matcher.build_mapping_relations(frontend_urls, mappings, gateway_routes)
 
         count = self.writer.write_relations_batch(relations)
 
@@ -163,6 +157,15 @@ class CrossAnalyzer:
         )
 
     def _dict_to_gateway_route(self, d: Dict) -> GatewayRoute:
+        import json
+
+        parameters = d.get("parameters", [])
+        if isinstance(parameters, str):
+            try:
+                parameters = json.loads(parameters)
+            except json.JSONDecodeError:
+                parameters = []
+
         return GatewayRoute(
             method=d["method"],
             full_path=d["full_path"],
@@ -171,7 +174,7 @@ class CrossAnalyzer:
             file_path=d.get("file_path"),
             tags=d.get("tags", []),
             summary=d.get("summary"),
-            parameters=d.get("parameters", []),
+            parameters=parameters,
             deprecated=d.get("deprecated", False),
         )
 
