@@ -98,6 +98,7 @@ repo-analyzer analyze --group full_stack
 
 # 查询结果
 repo-analyzer query chain --limit 10
+repo-analyzer query stats
 ```
 
 ---
@@ -232,6 +233,9 @@ repo-analyzer query unmatched-fe
 
 # 查看未匹配的 Gateway 路由
 repo-analyzer query unmatched-gw
+
+# 查看各仓库节点统计
+repo-analyzer query stats
 ```
 
 #### 调用链输出解读

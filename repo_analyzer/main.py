@@ -46,10 +46,10 @@ def create_parser():
     query_parser = subparsers.add_parser("query", help="Query graph")
     query_parser.add_argument(
         "query_type",
-        choices=["chain", "unmatched-fe", "unmatched-gw"],
+        choices=["chain", "unmatched-fe", "unmatched-gw", "stats"],
         help="Query type",
     )
-    query_parser.add_argument("--group", help="Group name")
+    query_parser.add_argument("--group", help="Group name (optional)")
     query_parser.add_argument("--limit", type=int, default=100, help="Result limit")
 
     return parser
@@ -129,10 +129,22 @@ def cmd_query(args):
     writer = Neo4jWriter.from_config()
 
     try:
-        manager = RepoGroup(writer)
-
         if args.query_type == "chain":
-            results = manager.get_call_chain(limit=args.limit)
+            results = writer.execute(
+                """
+                MATCH (url:FrontendUrl)-[c:CALLS]->(route:GatewayRoute)-[r:ROUTES_TO]->(api:BackendApi)
+                RETURN url.raw_url as frontend_url,
+                       route.full_path as gateway_path,
+                       api.class_name as backend_class,
+                       api.method_name as backend_method,
+                       c.match_type as frontend_match_type,
+                       c.confidence as frontend_confidence,
+                       r.match_type as gateway_match_type,
+                       r.confidence as gateway_confidence
+                LIMIT $limit
+            """,
+                {"limit": args.limit},
+            )
             print(f"\nCall chains ({len(results)}):")
             for r in results:
                 print(f"  {r['frontend_url']}")
@@ -144,16 +156,36 @@ def cmd_query(args):
                 )
 
         elif args.query_type == "unmatched-fe":
-            results = manager.get_unmatched_frontend_urls()
+            results = writer.execute("""
+                MATCH (url:FrontendUrl)
+                WHERE NOT (url)-[:CALLS]->(:GatewayRoute) AND NOT (url)-[:USES_MAPPING]->(:MappingRule)
+                RETURN url.raw_url as url, url.file_path as file_path, url.line_number as line
+            """)
             print(f"\nUnmatched frontend URLs ({len(results)}):")
             for r in results:
                 print(f"  {r['url']} ({r['file_path']}:{r['line']})")
 
         elif args.query_type == "unmatched-gw":
-            results = manager.get_unmatched_gateway_routes()
+            results = writer.execute("""
+                MATCH (route:GatewayRoute)
+                WHERE NOT (route)-[:ROUTES_TO]->(:BackendApi)
+                RETURN route.full_path as path, route.method as method, route.operation_id as operation_id
+            """)
             print(f"\nUnmatched gateway routes ({len(results)}):")
             for r in results:
                 print(f"  {r['method']} {r['path']} ({r['operation_id']})")
+
+        elif args.query_type == "stats":
+            results = writer.execute("""
+                MATCH (n)
+                WHERE n.repo IS NOT NULL
+                RETURN n.repo as repo, labels(n)[0] as type, count(*) as count
+                ORDER BY repo, type
+            """)
+            print(f"\nNode statistics:")
+            for r in results:
+                print(f"  {r['repo']}: {r['type']} = {r['count']}")
+
     finally:
         writer.close()
 
