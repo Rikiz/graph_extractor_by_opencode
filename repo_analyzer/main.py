@@ -132,33 +132,36 @@ def cmd_query(args):
         if args.query_type == "chain":
             results = writer.execute(
                 """
-                // 路径1: 直接 CALLS 关系
-                MATCH (url:FrontendUrl)-[c:CALLS]->(route:GatewayRoute)-[r:ROUTES_TO]->(api:BackendApi)
-                WITH url.raw_url as frontend_url,
-                     route.full_path as gateway_path,
-                     api.class_name as backend_class,
-                     api.method_name as backend_method,
-                     c.match_type as frontend_match_type,
-                     c.confidence as frontend_confidence,
-                     r.match_type as gateway_match_type,
-                     r.confidence as gateway_confidence,
-                     c.confidence * r.confidence as total_confidence
-                
-                UNION
-                
-                // 路径2: 通过 MappingRule 间接连接
-                MATCH (url:FrontendUrl)-[um:USES_MAPPING]->(mapping:MappingRule)-[mt:MAPS_TO]->(route:GatewayRoute)-[r:ROUTES_TO]->(api:BackendApi)
-                WITH url.raw_url as frontend_url,
-                     route.full_path as gateway_path,
-                     api.class_name as backend_class,
-                     api.method_name as backend_method,
-                     um.match_type as frontend_match_type,
-                     um.confidence as frontend_confidence,
-                     r.match_type as gateway_match_type,
-                     r.confidence as gateway_confidence,
-                     um.confidence * r.confidence as total_confidence
-                
+                CALL {
+                    // 路径1: 直接 CALLS 关系
+                    MATCH (url:FrontendUrl)-[c:CALLS]->(route:GatewayRoute)-[r:ROUTES_TO]->(api:BackendApi)
+                    RETURN url.raw_url as frontend_url,
+                           route.full_path as gateway_path,
+                           api.class_name as backend_class,
+                           api.method_name as backend_method,
+                           c.match_type as frontend_match_type,
+                           c.confidence as frontend_confidence,
+                           r.match_type as gateway_match_type,
+                           r.confidence as gateway_confidence,
+                           c.confidence * r.confidence as total_confidence
+                    
+                    UNION
+                    
+                    // 路径2: 通过 MappingRule 间接连接
+                    MATCH (url:FrontendUrl)-[um:USES_MAPPING]->(mapping:MappingRule)-[mt:MAPS_TO]->(route:GatewayRoute)-[r:ROUTES_TO]->(api:BackendApi)
+                    RETURN url.raw_url as frontend_url,
+                           route.full_path as gateway_path,
+                           api.class_name as backend_class,
+                           api.method_name as backend_method,
+                           um.match_type as frontend_match_type,
+                           um.confidence as frontend_confidence,
+                           r.match_type as gateway_match_type,
+                           r.confidence as gateway_confidence,
+                           um.confidence * r.confidence as total_confidence
+                }
                 // 按总置信度排序，每个 frontend_url 只取最高的一条
+                WITH frontend_url, total_confidence, gateway_path, backend_class, backend_method,
+                     frontend_match_type, frontend_confidence, gateway_match_type, gateway_confidence
                 ORDER BY frontend_url, total_confidence DESC
                 WITH frontend_url, 
                      COLLECT({
